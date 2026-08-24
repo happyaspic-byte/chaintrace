@@ -21,6 +21,6 @@ test("renders the final Korean ChainTrace experience", async () => {
   assert.match(html, /ChainTrace/);
   assert.match(html, /지갑 자금 흐름/);
   assert.match(html, /Bitcoin Mainnet/);
-  assert.match(html, /13개 네트워크/);
+  assert.match(html, /14개 네트워크/);
   assert.doesNotMatch(html, /codex-preview/);
 });

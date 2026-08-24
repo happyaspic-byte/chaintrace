@@ -22,11 +22,12 @@ test("keeps the investigation controls and accessible graph contract", async () 
     assert.match(source, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const chain of [
-    "Bitcoin", "Ethereum", "Solana", "TRON", "BNB Chain", "Polygon",
+    "Bitcoin", "Ethereum", "Ethereum Classic", "Solana", "TRON", "BNB Chain", "Polygon",
     "Arbitrum", "Optimism", "Base", "Avalanche", "Dogecoin", "Litecoin", "XRP Ledger",
   ]) {
     assert.match(source, new RegExp(`name: "${chain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
   }
+  assert.equal([...source.matchAll(/\{ id: "[^"]+", name:/g)].length, 14);
   for (const behavior of ["minHops", "ageDays", "setTracedAddress", "aria-invalid", "aria-pressed", "전체 주소를 직접 선택해주세요"]) {
     assert.match(source, new RegExp(behavior));
   }

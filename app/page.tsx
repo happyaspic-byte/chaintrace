@@ -8,6 +8,7 @@ type ChainFamily = "utxo" | "evm" | "solana" | "tron" | "xrpl";
 type ChainId =
   | "bitcoin"
   | "ethereum"
+  | "ethereum-classic"
   | "solana"
   | "tron"
   | "bnb"
@@ -104,6 +105,7 @@ const EVM_ADDRESSES = [
 const CHAINS: ChainConfig[] = [
   { id: "bitcoin", name: "Bitcoin", network: "Bitcoin Mainnet", family: "utxo", badge: "BTC", assets: ["BTC"], addresses: BTC_ADDRESSES, amountScale: 0.00001, minimum: 0.01 },
   { id: "ethereum", name: "Ethereum", network: "Ethereum Mainnet", family: "evm", badge: "ETH", assets: ["ETH", "USDT", "USDC"], addresses: EVM_ADDRESSES, amountScale: 0.0001, minimum: 0.1 },
+  { id: "ethereum-classic", name: "Ethereum Classic", network: "Ethereum Classic Mainnet", family: "evm", badge: "ETC", assets: ["ETC"], addresses: EVM_ADDRESSES, amountScale: 0.001, minimum: 1 },
   { id: "solana", name: "Solana", network: "Solana Mainnet", family: "solana", badge: "SOL", assets: ["SOL", "USDC", "USDT"], addresses: SOL_ADDRESSES, amountScale: 0.01, minimum: 10 },
   { id: "tron", name: "TRON", network: "TRON Mainnet", family: "tron", badge: "TRX", assets: ["USDT", "TRX"], addresses: TRON_ADDRESSES, amountScale: 1, minimum: 1000 },
   { id: "bnb", name: "BNB Chain", network: "BNB Smart Chain", family: "evm", badge: "BNB", assets: ["BNB", "USDT", "USDC"], addresses: EVM_ADDRESSES, amountScale: 0.0001, minimum: 0.1 },
@@ -162,7 +164,7 @@ export default function Home() {
   const [periodDays, setPeriodDays] = useState(30);
   const [zoom, setZoom] = useState(1);
   const [showAllActivities, setShowAllActivities] = useState(false);
-  const [notice, setNotice] = useState("13개 네트워크의 결정적 데모 데이터가 준비되었습니다.");
+  const [notice, setNotice] = useState("14개 네트워크의 결정적 데모 데이터가 준비되었습니다.");
   const traceTimeoutRef = useRef<number | null>(null);
   const traceRequestIdRef = useRef(0);
 

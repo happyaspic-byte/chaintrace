@@ -552,6 +552,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepts_ethereum_classic_and_uses_etc_as_the_native_asset() {
+        let app = router(Arc::new(EmptyProvider), TEST_API_TOKEN);
+        let body = json!({
+            "chain": "ethereum_classic",
+            "root_address": "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624",
+            "asset": { "kind": "native" },
+            "max_hops": 1,
+            "min_timestamp": 0,
+            "max_timestamp": 100
+        });
+        let response = app
+            .oneshot(
+                Request::post("/api/v1/trace")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {TEST_API_TOKEN}"))
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let graph: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(graph["chain"], "ethereum_classic");
+        assert_eq!(graph["asset_symbol"], "ETC");
+    }
+
+    #[tokio::test]
     async fn rejects_unbounded_limits() {
         let app = router(Arc::new(EmptyProvider), TEST_API_TOKEN);
         let body = json!({

@@ -1,6 +1,6 @@
 # ChainTrace
 
-BTC, EVM, Solana, TRON, DOGE, LTC, XRP의 **지갑 입출금 연결을 1~3단계까지 추적하고 하나의 그래프로 조사하는 멀티체인 MVP**입니다.
+BTC, ETH, ETC, Solana, TRON, DOGE, LTC, XRP의 **지갑 입출금 연결을 1~3단계까지 추적하고 하나의 그래프로 조사하는 멀티체인 MVP**입니다.
 
 ![ChainTrace social preview](public/og.png)
 
@@ -10,6 +10,7 @@ BTC, EVM, Solana, TRON, DOGE, LTC, XRP의 **지갑 입출금 연결을 1~3단계
 |---|---|---|---|
 | Bitcoin | BTC | UTXO | Tatum v4 |
 | Ethereum | ETH, ERC-20 | EVM | Etherscan API V2 |
+| Ethereum Classic | ETC, ERC-20 | EVM | ETC Blockscout |
 | Solana | SOL, SPL | account/program | Helius `getTransfersByAddress` |
 | TRON | TRC-20, 기본 USDT | account/contract | TronGrid |
 | BNB Chain, Polygon, Arbitrum, Optimism, Base, Avalanche | native, ERC-20 | EVM | Etherscan API V2 |
@@ -17,7 +18,7 @@ BTC, EVM, Solana, TRON, DOGE, LTC, XRP의 **지갑 입출금 연결을 1~3단계
 | Litecoin | LTC 투명 주소 | UTXO | Tatum v4 |
 | XRP Ledger | XRP Payment | account/ledger | XRPL `account_tx` |
 
-조사 화면은 API 키 없이도 13개 네트워크의 결정적 fixture를 전환해 볼 수 있습니다. 실제 온체인 조회는 아래 provider 설정이 필요합니다. UI 데모와 Rust API는 현재 별도 실행 구성입니다.
+조사 화면은 API 키 없이도 14개 네트워크의 결정적 fixture를 전환해 볼 수 있습니다. 실제 온체인 조회는 아래 provider 설정이 필요합니다. UI 데모와 Rust API는 현재 별도 실행 구성입니다.
 
 ## 구현된 기능
 
@@ -73,6 +74,7 @@ Provider 키:
 
 ```text
 ETHERSCAN_API_KEY=      # Ethereum 및 지원 EVM 체인
+ETC_BLOCKSCOUT_API_KEY= # Ethereum Classic; 비워도 공개 한도 내 요청 가능
 TATUM_API_KEY=          # BTC, DOGE, LTC
 HELIUS_API_KEY=         # SOL, SPL
 TRONGRID_API_KEY=       # TRON, TRC-20; 비워도 공개 한도 내 요청 가능
@@ -81,6 +83,7 @@ CHAINTRACE_API_TOKEN=       # 32자 이상의 무작위 서버 API 토큰(필수
 ```
 
 - Etherscan V2의 BNB Chain, Base, OP Mainnet, Avalanche C-Chain은 현재 유료 플랜 대상입니다. [공식 지원 체인](https://docs.etherscan.io/supported-chains)
+- Ethereum Classic은 공식 ETC Blockscout의 Etherscan 호환 REST API를 사용하며 API 키 없이도 호출할 수 있습니다. 높은 요청 한도에는 선택형 `ETC_BLOCKSCOUT_API_KEY`를 설정합니다. [ETC 네트워크·API 안내](https://ethereumclassic.com/build/networks), [Blockscout API 안내](https://docs.blockscout.com/devs/replace-links)
 - Helius `getTransfersByAddress`는 Developer 플랜 이상이 필요하며 최근 1년 데이터만 보존합니다. ChainTrace는 1년보다 오래된 시작 시각을 upstream 호출 전에 거부합니다. [공식 메서드 문서](https://www.helius.dev/docs/rpc/gettransfersbyaddress)
 - Tatum UTXO history는 BTC, LTC, DOGE를 지원합니다. [공식 UTXO history 문서](https://docs.tatum.io/reference/gettransactionhistoryutxosblockchainsapi)
 - Ripple 공개 서버는 프로토타입용이며 지속적인 상업 트래픽에는 별도 provider 또는 자체 노드가 필요합니다. [XRPL 공개 서버 안내](https://xrpl.org/docs/tutorials/public-servers)
@@ -139,6 +142,7 @@ BTC는 소수점 8자리이므로 `min_amount_raw: "1000000"`은 0.01 BTC입니�
 ```
 
 금액은 JSON 숫자가 아닌 문자열로 반환해 정밀도를 보존합니다. 응답에는 `chain`, `asset_symbol`, `complete`, `truncated`, `truncation_reasons`가 포함됩니다.
+Ethereum Classic 요청은 `"chain": "ethereum_classic"`을 사용하며 native ETC와 ERC-20을 같은 형식으로 조회합니다.
 
 ## 검증
 

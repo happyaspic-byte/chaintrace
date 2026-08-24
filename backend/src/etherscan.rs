@@ -21,6 +21,12 @@ const PAGE_SIZE: usize = 1_000;
 const BLOCK_RANGE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApiStyle {
+    EtherscanV2,
+    BlockscoutInstance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EtherscanAction {
     Normal,
     Internal,
@@ -48,7 +54,10 @@ struct BlockRangeCache {
 pub struct EtherscanClient {
     client: reqwest::Client,
     base_url: String,
-    api_key: String,
+    api_key: Option<String>,
+    api_style: ApiStyle,
+    restricted_chain: Option<Chain>,
+    provider_name: &'static str,
     max_pages: usize,
     block_cache: Arc<Mutex<Option<BlockRangeCache>>>,
 }
@@ -72,20 +81,73 @@ impl EtherscanClient {
         Ok(Self {
             client,
             base_url: base_url.into(),
-            api_key,
+            api_key: Some(api_key),
+            api_style: ApiStyle::EtherscanV2,
+            restricted_chain: None,
+            provider_name: "Etherscan",
             max_pages,
             block_cache: Arc::new(Mutex::new(None)),
         })
     }
 
+    pub fn new_blockscout(
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        chain: Chain,
+        max_pages: usize,
+    ) -> Result<Self, ProviderError> {
+        if chain.family() != ChainFamily::Evm {
+            return Err(ProviderError::UnsupportedChain);
+        }
+        let api_key = api_key.filter(|value| !value.trim().is_empty());
+        let client = reqwest::Client::builder()
+            .user_agent("chaintrace/0.2")
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|error| ProviderError::Request(error.to_string()))?;
+        Ok(Self {
+            client,
+            base_url: base_url.into(),
+            api_key,
+            api_style: ApiStyle::BlockscoutInstance,
+            restricted_chain: Some(chain),
+            provider_name: "Blockscout",
+            max_pages,
+            block_cache: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    fn add_provider_query(
+        &self,
+        query: &mut Vec<(&'static str, String)>,
+        chain: Chain,
+    ) -> Result<(), ProviderError> {
+        if self
+            .restricted_chain
+            .is_some_and(|restricted| restricted != chain)
+        {
+            return Err(ProviderError::UnsupportedChain);
+        }
+        if self.api_style == ApiStyle::EtherscanV2 {
+            let chain_id = chain
+                .evm_chain_id()
+                .ok_or(ProviderError::UnsupportedChain)?;
+            query.push(("chainid", chain_id.to_string()));
+        }
+        if let Some(api_key) = &self.api_key {
+            query.push(("apikey", api_key.clone()));
+        }
+        Ok(())
+    }
+
     async fn block_by_time(
         &self,
-        chain_id: u64,
+        chain: Chain,
         timestamp_ms: i64,
         closest: &str,
     ) -> Result<u64, ProviderError> {
-        let query = [
-            ("chainid", chain_id.to_string()),
+        let mut query = vec![
             ("module", "block".to_owned()),
             ("action", "getblocknobytime".to_owned()),
             (
@@ -93,8 +155,8 @@ impl EtherscanClient {
                 timestamp_ms.div_euclid(1_000).max(0).to_string(),
             ),
             ("closest", closest.to_owned()),
-            ("apikey", self.api_key.clone()),
         ];
+        self.add_provider_query(&mut query, chain)?;
         let response = self
             .client
             .get(&self.base_url)
@@ -103,9 +165,9 @@ impl EtherscanClient {
             .await
             .map_err(|error| {
                 ProviderError::Request(if error.is_timeout() {
-                    "Etherscan block lookup timed out".to_owned()
+                    format!("{} block lookup timed out", self.provider_name)
                 } else {
-                    "Etherscan block lookup transport error".to_owned()
+                    format!("{} block lookup transport error", self.provider_name)
                 })
             })?;
         match response.status() {
@@ -119,13 +181,16 @@ impl EtherscanClient {
             _ => {}
         }
         let envelope = response.json::<EtherscanEnvelope>().await.map_err(|_| {
-            ProviderError::InvalidResponse("Etherscan returned invalid JSON".to_owned())
+            ProviderError::InvalidResponse(format!("{} returned invalid JSON", self.provider_name))
         })?;
-        let result = envelope.result.as_str().unwrap_or_default();
-        if result.to_ascii_lowercase().contains("rate limit") {
+        if envelope
+            .result
+            .as_str()
+            .is_some_and(|result| result.to_ascii_lowercase().contains("rate limit"))
+        {
             return Err(ProviderError::RateLimited);
         }
-        result.parse::<u64>().map_err(|_| {
+        parse_block_number(&envelope.result).ok_or_else(|| {
             ProviderError::InvalidResponse(format!("{}: invalid block result", envelope.message))
         })
     }
@@ -142,15 +207,11 @@ impl EtherscanClient {
                 return Ok(cached.range);
             }
         }
-        let chain_id = address
-            .chain()
-            .evm_chain_id()
-            .ok_or(ProviderError::UnsupportedChain)?;
         let start = self
-            .block_by_time(chain_id, window.min_timestamp, "after")
+            .block_by_time(address.chain(), window.min_timestamp, "after")
             .await?;
         let end = self
-            .block_by_time(chain_id, window.max_timestamp, "before")
+            .block_by_time(address.chain(), window.max_timestamp, "before")
             .await?;
         *self.block_cache.lock().expect("block cache poisoned") = Some(BlockRangeCache {
             key,
@@ -169,12 +230,7 @@ impl EtherscanClient {
         end_block: u64,
         page: usize,
     ) -> Result<Vec<EtherscanRow>, ProviderError> {
-        let chain_id = address
-            .chain()
-            .evm_chain_id()
-            .ok_or(ProviderError::UnsupportedChain)?;
         let mut query = vec![
-            ("chainid", chain_id.to_string()),
             ("module", "account".to_owned()),
             ("action", action.as_str().to_owned()),
             ("address", address.as_str().to_owned()),
@@ -183,8 +239,8 @@ impl EtherscanClient {
             ("page", page.to_string()),
             ("offset", PAGE_SIZE.to_string()),
             ("sort", "asc".to_owned()),
-            ("apikey", self.api_key.clone()),
         ];
+        self.add_provider_query(&mut query, address.chain())?;
         if let Some(contract) = asset.contract_address() {
             query.push(("contractaddress", contract.to_owned()));
         }
@@ -196,9 +252,9 @@ impl EtherscanClient {
             .await
             .map_err(|error| {
                 ProviderError::Request(if error.is_timeout() {
-                    "Etherscan request timed out".to_owned()
+                    format!("{} request timed out", self.provider_name)
                 } else {
-                    "Etherscan transport error".to_owned()
+                    format!("{} transport error", self.provider_name)
                 })
             })?;
         match response.status() {
@@ -212,7 +268,7 @@ impl EtherscanClient {
             _ => {}
         }
         let envelope = response.json::<EtherscanEnvelope>().await.map_err(|_| {
-            ProviderError::InvalidResponse("Etherscan returned invalid JSON".to_owned())
+            ProviderError::InvalidResponse(format!("{} returned invalid JSON", self.provider_name))
         })?;
         match envelope.result {
             serde_json::Value::Array(rows) => rows
@@ -349,6 +405,12 @@ impl TransferProvider for EtherscanClient {
         if address.chain().family() != ChainFamily::Evm {
             return Err(ProviderError::UnsupportedChain);
         }
+        if self
+            .restricted_chain
+            .is_some_and(|restricted| restricted != address.chain())
+        {
+            return Err(ProviderError::UnsupportedChain);
+        }
         let page_limit = max_pages.clamp(1, self.max_pages.max(1));
         let (start_block, end_block) = self.block_range(address, window).await?;
         if start_block > end_block {
@@ -416,6 +478,20 @@ fn parse_index(value: &str) -> Option<u32> {
         .strip_prefix("0x")
         .and_then(|hex| u32::from_str_radix(hex, 16).ok())
         .or_else(|| value.parse::<u32>().ok())
+}
+
+fn parse_block_number(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| value.as_u64())
+        .or_else(|| {
+            let block_number = value.get("blockNumber")?;
+            block_number
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok())
+                .or_else(|| block_number.as_u64())
+        })
 }
 
 fn synthetic_event_key(row: &EtherscanRow) -> String {
@@ -636,6 +712,146 @@ mod tests {
             assert!(uri.contains("sort=asc"));
             assert!(uri.contains("apikey=test-key"));
         }
+    }
+
+    #[tokio::test]
+    async fn blockscout_instance_supports_etc_native_and_erc20_without_cross_chain_queries() {
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let request_log = Arc::clone(&requests);
+        let app = Router::new().route(
+            "/",
+            any(move |request: Request<Body>| {
+                let request_log = Arc::clone(&request_log);
+                async move {
+                    let uri = request.uri().to_string();
+                    request_log.lock().unwrap().push(uri.clone());
+                    let result = if uri.contains("action=getblocknobytime") {
+                        if uri.contains("closest=after") {
+                            serde_json::json!({ "blockNumber": "10" })
+                        } else {
+                            serde_json::json!({ "blockNumber": "20" })
+                        }
+                    } else if uri.contains("action=txlistinternal") {
+                        serde_json::json!([])
+                    } else if uri.contains("action=tokentx") {
+                        serde_json::json!([{
+                            "hash": "0xtoken", "from": "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624",
+                            "to": "0x149389ff0a7824d3172cad6c596498f384c1798e",
+                            "value": "2500000", "timeStamp": "101", "transactionIndex": "4",
+                            "logIndex": "0x2", "tokenDecimal": "6",
+                            "contractAddress": "0x23954cfab0d22e650746cd2cdbf56eb326123325"
+                        }])
+                    } else {
+                        serde_json::json!([{
+                            "hash": "0xnormal", "from": "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624",
+                            "to": "0x149389ff0a7824d3172cad6c596498f384c1798e",
+                            "value": "1500000000000000000", "timeStamp": "100",
+                            "transactionIndex": "3", "isError": "0", "txreceipt_status": "1"
+                        }])
+                    };
+                    Json(serde_json::json!({
+                        "status": "1",
+                        "message": "OK",
+                        "result": result
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = EtherscanClient::new_blockscout(
+            format!("http://{server_address}/"),
+            None,
+            Chain::EthereumClassic,
+            1,
+        )
+        .unwrap();
+        let address = ChainAddress::parse(
+            Chain::EthereumClassic,
+            "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624",
+        )
+        .unwrap();
+        let window = TraceWindow {
+            min_timestamp: 99_000,
+            max_timestamp: 102_000,
+        };
+
+        let native = client
+            .transfers(&address, &AssetSpec::native(), window, 1)
+            .await
+            .unwrap();
+        assert!(!native.truncated);
+        assert_eq!(native.transfers.len(), 1);
+        assert_eq!(native.transfers[0].chain, Chain::EthereumClassic);
+        assert_eq!(native.transfers[0].network, "ethereum-classic-mainnet");
+        assert_eq!(native.transfers[0].asset_symbol, "ETC");
+        assert_eq!(native.transfers[0].amount.display(), "1.5");
+
+        let token_asset = AssetSpec::token("USDT", "0x23954cfab0d22e650746cd2cdbf56eb326123325", 6);
+        let token = client
+            .transfers(&address, &token_asset, window, 1)
+            .await
+            .unwrap();
+        assert!(!token.truncated);
+        assert_eq!(token.transfers.len(), 1);
+        assert_eq!(token.transfers[0].asset_symbol, "USDT");
+        assert_eq!(token.transfers[0].amount.display(), "2.5");
+        assert_eq!(token.transfers[0].event_index, Some(2));
+
+        let ethereum_address = ChainAddress::parse(
+            Chain::Ethereum,
+            "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624",
+        )
+        .unwrap();
+        assert!(matches!(
+            client
+                .transfers(&ethereum_address, &AssetSpec::native(), window, 1)
+                .await,
+            Err(ProviderError::UnsupportedChain)
+        ));
+        server.abort();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(requests.iter().all(|uri| !uri.contains("chainid=")));
+        assert!(requests.iter().all(|uri| !uri.contains("apikey=")));
+        assert!(requests.iter().any(|uri| uri.contains("action=txlist&")));
+        assert!(requests
+            .iter()
+            .any(|uri| uri.contains("action=txlistinternal")));
+        let token_request = requests
+            .iter()
+            .find(|uri| uri.contains("action=tokentx"))
+            .expect("ERC-20 transfer request missing");
+        assert!(
+            token_request.contains("contractaddress=0x23954cfab0d22e650746cd2cdbf56eb326123325")
+        );
+    }
+
+    #[test]
+    fn blockscout_client_is_chain_restricted_and_api_key_is_optional() {
+        assert!(matches!(
+            EtherscanClient::new_blockscout("https://example.invalid/api", None, Chain::Bitcoin, 1,),
+            Err(ProviderError::UnsupportedChain)
+        ));
+
+        let client = EtherscanClient::new_blockscout(
+            "https://example.invalid/api",
+            Some("etc-key".to_owned()),
+            Chain::EthereumClassic,
+            1,
+        )
+        .unwrap();
+        let mut query = Vec::new();
+        client
+            .add_provider_query(&mut query, Chain::EthereumClassic)
+            .unwrap();
+        assert_eq!(query, vec![("apikey", "etc-key".to_owned())]);
+        assert!(matches!(
+            client.add_provider_query(&mut Vec::new(), Chain::Ethereum),
+            Err(ProviderError::UnsupportedChain)
+        ));
     }
 
     #[tokio::test]

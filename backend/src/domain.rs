@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 pub enum Chain {
     Bitcoin,
     Ethereum,
+    EthereumClassic,
     Solana,
     Tron,
     Bnb,
@@ -23,9 +24,10 @@ pub enum Chain {
 }
 
 impl Chain {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Bitcoin,
         Self::Ethereum,
+        Self::EthereumClassic,
         Self::Solana,
         Self::Tron,
         Self::Bnb,
@@ -43,6 +45,7 @@ impl Chain {
         match self {
             Self::Bitcoin | Self::Dogecoin | Self::Litecoin => ChainFamily::Utxo,
             Self::Ethereum
+            | Self::EthereumClassic
             | Self::Bnb
             | Self::Polygon
             | Self::Arbitrum
@@ -59,6 +62,7 @@ impl Chain {
         match self {
             Self::Bitcoin => "bitcoin-mainnet",
             Self::Ethereum => "ethereum-mainnet",
+            Self::EthereumClassic => "ethereum-classic-mainnet",
             Self::Solana => "solana-mainnet",
             Self::Tron => "tron-mainnet",
             Self::Bnb => "bnb-smart-chain",
@@ -77,6 +81,7 @@ impl Chain {
         match self {
             Self::Bitcoin => "BTC",
             Self::Ethereum | Self::Arbitrum | Self::Optimism | Self::Base => "ETH",
+            Self::EthereumClassic => "ETC",
             Self::Solana => "SOL",
             Self::Tron => "TRX",
             Self::Bnb => "BNB",
@@ -92,6 +97,7 @@ impl Chain {
         match self {
             Self::Bitcoin | Self::Dogecoin | Self::Litecoin => 8,
             Self::Ethereum
+            | Self::EthereumClassic
             | Self::Bnb
             | Self::Polygon
             | Self::Arbitrum
@@ -106,6 +112,7 @@ impl Chain {
     pub fn evm_chain_id(self) -> Option<u64> {
         match self {
             Self::Ethereum => Some(1),
+            Self::EthereumClassic => Some(61),
             Self::Bnb => Some(56),
             Self::Polygon => Some(137),
             Self::Arbitrum => Some(42_161),
@@ -586,6 +593,11 @@ mod tests {
         )
         .is_ok());
         assert!(ChainAddress::parse(
+            Chain::EthereumClassic,
+            "0xb0e3201a3c1cefb260e007781f36fbe5bc1bf624"
+        )
+        .is_ok());
+        assert!(ChainAddress::parse(
             Chain::Solana,
             "B7eKLu5DFf5bafEKpZPyBFuoBmMZtuworcbqDSaoPPDP"
         )
@@ -651,7 +663,25 @@ mod tests {
     fn native_assets_use_chain_specific_decimals() {
         assert_eq!(AssetSpec::native().decimals(Chain::Bitcoin), 8);
         assert_eq!(AssetSpec::native().decimals(Chain::Ethereum), 18);
+        assert_eq!(AssetSpec::native().decimals(Chain::EthereumClassic), 18);
+        assert_eq!(AssetSpec::native().symbol(Chain::EthereumClassic), "ETC");
         assert_eq!(AssetSpec::native().decimals(Chain::Solana), 9);
         assert_eq!(AssetSpec::native().symbol(Chain::Xrp), "XRP");
+    }
+
+    #[test]
+    fn ethereum_classic_has_a_stable_public_identity() {
+        assert_eq!(Chain::ALL.len(), 14);
+        assert!(Chain::ALL.contains(&Chain::EthereumClassic));
+        assert_eq!(Chain::EthereumClassic.family(), ChainFamily::Evm);
+        assert_eq!(
+            Chain::EthereumClassic.network_name(),
+            "ethereum-classic-mainnet"
+        );
+        assert_eq!(Chain::EthereumClassic.evm_chain_id(), Some(61));
+        assert_eq!(
+            serde_json::to_string(&Chain::EthereumClassic).unwrap(),
+            "\"ethereum_classic\""
+        );
     }
 }

@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, sync::Arc};
 
 use chaintrace_api::{
     etherscan::EtherscanClient, helius::HeliusClient, router, tatum::TatumUtxoClient,
-    trongrid::TronGridClient, xrpl::XrplClient, ChainFamily, ProviderRegistry,
+    trongrid::TronGridClient, xrpl::XrplClient, Chain, ChainFamily, ProviderRegistry,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -36,6 +36,20 @@ async fn main() {
             ),
         );
     }
+    let etc_base_url = env::var("ETC_BLOCKSCOUT_BASE_URL")
+        .unwrap_or_else(|_| "https://etc.blockscout.com/api".to_owned());
+    providers.register_chain(
+        Chain::EthereumClassic,
+        Arc::new(
+            EtherscanClient::new_blockscout(
+                etc_base_url,
+                optional_env("ETC_BLOCKSCOUT_API_KEY"),
+                Chain::EthereumClassic,
+                10,
+            )
+            .expect("failed to initialize Ethereum Classic Blockscout client"),
+        ),
+    );
     if let Some(api_key) = optional_env("TATUM_API_KEY") {
         let base_url =
             env::var("TATUM_BASE_URL").unwrap_or_else(|_| "https://api.tatum.io".to_owned());
@@ -65,7 +79,11 @@ async fn main() {
         Arc::new(XrplClient::new(xrpl_url, 10).expect("failed to initialize XRPL client")),
     );
 
-    tracing::info!(families = ?providers.configured_families(), "configured chain provider families");
+    tracing::info!(
+        families = ?providers.configured_families(),
+        chain_overrides = ?providers.configured_chains(),
+        "configured chain providers"
+    );
     let api_token = env::var("CHAINTRACE_API_TOKEN")
         .ok()
         .filter(|value| value.trim().len() >= 32)
